@@ -34,3 +34,6 @@ Featured on Lifehacker: http://lifehacker.com/5666312/decreased-productivity-for
 ## Showing Thanks
 * Click on the coffee-cup icon in the Options page to support me via PayPal :)
 * Bitcoin: **39VJ5L9Yd6WocG6r88uE7ZZnM5J2M5bW92**
+
+## Attributions
+* Extension and toolbar icons sourced from [Bootstrap Icons](https://icons.getbootstrap.com/) by The Bootstrap Authors, licensed under the [MIT License](https://github.com/twbs/icons/blob/main/LICENSE).
