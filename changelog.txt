@@ -1,3 +1,9 @@
+v0.48.0 - Thursday, March 12, 2026
+- Added support for X.com (formerly Twitter) cloaking
+- New extension icon: a cute cat with whiskers
+- Updated minimum Chrome version requirement to 116
+- Removed deprecated Google+ (plus.google.com) cloaking code
+
 v0.46.56.11 - Friday, October 12, 2018
 - Fix WhatsApp Web blank white screen upon login
 - Add Turkish translation - thanks Serdar!
@@ -155,14 +161,14 @@ v0.46.35 - Tuesday, May 20, 2014
 -updated to latest Chrome extension API version
 
 v0.46.34 - Sunday, August 21, 2011
--Español and Japanese locales updated (thank you Luciano and Yamaji for translating!)
+-EspaÃ±ol and Japanese locales updated (thank you Luciano and Yamaji for translating!)
 -fixed minor locale issue in the Options page (thanks Yamaji)
 
 v0.46.33 - Wednesday, August 10, 2011
 -you can now set how transparent images are! (unhovered and hovered; live example provided in the Options page)
 -added keyboard shortcut (CTRL+F12) to toggle the cloaking of pages! (enabled by default; you can disable this in the Options page)
 -fixed possible memory leak (and intermittent browser crash (?)) (related to the page title cloaking function and an infinite loop)
--minor updates to the Español locale (thanks Luciano)
+-minor updates to the EspaÃ±ol locale (thanks Luciano)
 -updated coffee-buyer list :)
 
 v0.46.31-0.46.32 - Tuesday, August 9, 2011

@@ -93,13 +93,10 @@ function addCloak(sfw, f, fsize, u, bg, text, table, link, bold, o1, o2, collaps
 		} else if (sfw == 'Paranoid') magic += ' div[data-asset-intro-image="true"] { display: none !important; } '; // hide welcome graphic
 		magic += ' .copyable-text img { pointer-events: initial !important; } '; // make emojis and icons at cloak-hover opacity
 	}
-	else if (curlocation.match(/^https?:\/\/twitter\.com\//i)) {
+	else if (curlocation.match(/^https?:\/\/(twitter|x)\.com\//i)) {
 		magic += " .QuoteTweet, .QuoteTweet *, #playerContainer, #playerContainer *, .Gallery, .Gallery * { background-color: transparent !important; } ";
 		if (sfw != 'Paranoid' && sfw != 'SFW1') magic += " #playerContainer video { opacity: 1 !important; } ";
 		magic += " .Grid--withGutter>.Grid-cell { margin-right: -1px !important; margin-left: -1px !important; } ";
-	}
-	else if (curlocation.match(/^https?:\/\/plus\.google\.com\//i)) {
-		magic += " .x2 { position: initial !important; } ";
 	}
 	else if (curlocation.match(/^https?:\/\/www\.engadget\.com\//i)) {
 		magic += " .o-hit { cursor: initial !important; } ";
