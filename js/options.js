@@ -1,17 +1,20 @@
 // (c) Andrew
 // Icon by dunedhel: http://dunedhel.deviantart.com/
 // Supporting functions by AdThwart - T. Joseph
-var version = (function () {
-	var xhr = new XMLHttpRequest();
-	xhr.open('GET', chrome.extension.getURL('manifest.json'), false);
-	xhr.send(null);
-	return JSON.parse(xhr.responseText).version;
-}());
-var bkg = chrome.extension.getBackgroundPage();
+var version = chrome.runtime.getManifest().version;
 var error = false;
 var oldglobalstate = false;
 var settingnames = [];
-document.addEventListener('DOMContentLoaded', function () {
+var dpSettings = {}; // local cache of settings loaded from chrome.storage.local
+
+// Load all settings from storage into dpSettings cache
+async function loadSettingsFromStorage() {
+	dpSettings = await chrome.storage.local.get(null);
+	return dpSettings;
+}
+
+document.addEventListener('DOMContentLoaded', async function () {
+	await loadSettingsFromStorage();
 	$("#tabs").tabs();
 	$("#o1").slider({min: 0, max: 1, step: 0.05, slide: function(event, ui) { $("#opacity1").val(ui.value); opacitytest(); }, stop: function(event, ui) { 
 		if (ui.value == 0) $("#collapseimageblock").show();
@@ -115,19 +118,21 @@ function keyhandle(keypressed) {
 	}
 }
 function loadCheckbox(id) {
-	document.getElementById(id).checked = typeof localStorage[id] == "undefined" ? false : localStorage[id] == "true";
+	document.getElementById(id).checked = typeof dpSettings[id] == "undefined" ? false : dpSettings[id] == "true";
 }
 
 function loadElement(id) {
-	$("#"+id).val(localStorage[id]);
+	$("#"+id).val(dpSettings[id]);
 }
 
 function saveCheckbox(id) {
-	localStorage[id] = document.getElementById(id).checked;
+	dpSettings[id] = String(document.getElementById(id).checked);
+	chrome.storage.local.set({[id]: dpSettings[id]});
 }
 
 function saveElement(id) {
-	localStorage[id] = $("#"+id).val();
+	dpSettings[id] = $("#"+id).val();
+	chrome.storage.local.set({[id]: dpSettings[id]});
 }
 function closeOptions() {
 	window.open('', '_self', '');window.close();
@@ -225,7 +230,7 @@ function i18load() {
 function loadOptions() {
 	document.title = chrome.i18n.getMessage("dpoptions");
 	i18load();
-	oldglobalstate = localStorage["global"];
+	oldglobalstate = dpSettings["global"];
 	loadCheckbox("enable");
 	loadCheckbox("global");
 	loadCheckbox("enableToggle");
@@ -327,7 +332,7 @@ function saveOptions() {
 	saveElement("fontsize");
 	if ($('#showIcon').is(':checked')) {
 		$(".discreeticonrow").show();
-		bkg.setDPIcon();
+		chrome.runtime.sendMessage({reqtype: 'set-dp-icon'});
 	} else $(".discreeticonrow").hide();
 	if (isValidColor($('#s_text').val()) && isValidColor($('#s_bg').val()) && isValidColor($('#s_table').val()) && isValidColor($('#s_link').val())) {
 		saveElement("s_text");
@@ -341,9 +346,9 @@ function saveOptions() {
 	saveElement("customcss");
 	updateExport();
 	// Apply new settings
-	bkg.optionsSaveTrigger(oldglobalstate, localStorage["global"]);
-	bkg.hotkeyChange();
-	oldglobalstate = localStorage["global"];
+	chrome.runtime.sendMessage({reqtype: 'options-save-trigger', prevglob: oldglobalstate, newglob: dpSettings["global"]});
+	chrome.runtime.sendMessage({reqtype: 'hotkey-change'});
+	oldglobalstate = dpSettings["global"];
 	// Remove any existing styling
 	if (!error) notification(chrome.i18n.getMessage("saved"));
 	else notification(chrome.i18n.getMessage("invalidcolour"));
@@ -491,22 +496,32 @@ function addList(type) {
 	if (!domain.match(/^(?:[\-\w\*\?]+(\.[\-\w\*\?]+)*|((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[0-9]{1,2})\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[0-9]{1,2})|\[[A-Fa-f0-9:.]+\])?$/g)) {
 		$('#listMsg').html(chrome.i18n.getMessage("invaliddomain")).stop().fadeIn("slow").delay(2000).fadeOut("slow");
 	} else {
-		bkg.domainHandler(domain, type);
-		$('#url').val('');
-		$('#listMsg').html([chrome.i18n.getMessage("whitelisted"),chrome.i18n.getMessage("blacklisted")][type]+' '+domain+'.').stop().fadeIn("slow").delay(2000).fadeOut("slow");
-		listUpdate();
-		$('#url').focus();
+		chrome.runtime.sendMessage({reqtype: 'domain-handler', domain: domain, action: type}, function(response) {
+			if (response) {
+				dpSettings['whiteList'] = response.whiteList;
+				dpSettings['blackList'] = response.blackList;
+			}
+			$('#url').val('');
+			$('#listMsg').html([chrome.i18n.getMessage("whitelisted"),chrome.i18n.getMessage("blacklisted")][type]+' '+domain+'.').stop().fadeIn("slow").delay(2000).fadeOut("slow");
+			listUpdate();
+			$('#url').focus();
+		});
 	}
 	return false;
 }
 function domainRemover(domain) {
-	bkg.domainHandler(domain,2);
-	listUpdate();
+	chrome.runtime.sendMessage({reqtype: 'domain-handler', domain: domain, action: 2}, function(response) {
+		if (response) {
+			dpSettings['whiteList'] = response.whiteList;
+			dpSettings['blackList'] = response.blackList;
+		}
+		listUpdate();
+	});
 	return false;
 }
 function listUpdate() {
-	var whiteList = JSON.parse(localStorage['whiteList']);
-	var blackList = JSON.parse(localStorage['blackList']);
+	var whiteList = JSON.parse(dpSettings['whiteList'] || '[]');
+	var blackList = JSON.parse(dpSettings['blackList'] || '[]');
 	
 	var whitelistCompiled = '';
 	if(whiteList.length==0) whitelistCompiled = '['+chrome.i18n.getMessage("empty")+']';
@@ -524,12 +539,16 @@ function listUpdate() {
 	$('#blacklist').html(blacklistCompiled);
 	$(".domainRemover").unbind('click');
 	$(".domainRemover").click(function() { domainRemover($(this).attr('rel'));});
-	bkg.initLists();
+	chrome.runtime.sendMessage({reqtype: 'init-lists'});
 	updateExport();
 }
 function listclear(type) {
 	if (confirm([chrome.i18n.getMessage("removefromwhitelist"),chrome.i18n.getMessage("removefromblacklist")][type]+'?')) {
-		localStorage[['whiteList','blackList'][type]] = JSON.stringify([]);
+		var key = ['whiteList','blackList'][type];
+		dpSettings[key] = JSON.stringify([]);
+		var update = {};
+		update[key] = JSON.stringify([]);
+		chrome.storage.local.set(update);
 		listUpdate();
 	}
 	return false;
@@ -537,10 +556,10 @@ function listclear(type) {
 // from KB SSL Enforcer: https://code.google.com/p/kbsslenforcer/ -->
 
 function revertColours(s) {
-	$('#s_bg').val(localStorage['s_bg']);
-	$('#s_text').val(localStorage['s_text']);
-	$('#s_link').val(localStorage['s_link']);
-	$('#s_table').val(localStorage['s_table']);
+	$('#s_bg').val(dpSettings['s_bg']);
+	$('#s_text').val(dpSettings['s_text']);
+	$('#s_link').val(dpSettings['s_link']);
+	$('#s_table').val(dpSettings['s_table']);
 	updateDemo();
 }
 
@@ -563,18 +582,18 @@ function downloadtxt() {
 	var downloadLink = document.createElement("a");
 	downloadLink.download = fileNameToSaveAs;
 	downloadLink.innerHTML = "Download File";
-	downloadLink.href = window.webkitURL.createObjectURL(textFileAsBlob);
+	downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
 	downloadLink.click();
 	downloadLink.remove();
 }
 function updateExport() {
 	$("#settingsexport").val("");
 	settingnames = [];
-	for (var i in localStorage) {
-		if (localStorage.hasOwnProperty(i)) {
+	for (var i in dpSettings) {
+		if (Object.prototype.hasOwnProperty.call(dpSettings, i)) {
 			if (i != "version") {
 				settingnames.push(i);
-				$("#settingsexport").val($("#settingsexport").val()+i+"|"+localStorage[i].replace(/(?:\r\n|\r|\n)/g, ' ')+"\n");
+				$("#settingsexport").val($("#settingsexport").val()+i+"|"+String(dpSettings[i]).replace(/(?:\r\n|\r|\n)/g, ' ')+"\n");
 			}
 		}
 	}
@@ -587,6 +606,7 @@ function settingsImport() {
 		notification(chrome.i18n.getMessage("pastesettings"));
 		return false;
 	}
+	var updates = {};
 	if (settings.length > 0) {
 		$.each(settings, function(i, v) {
 			if ($.trim(v) != "") {
@@ -594,22 +614,31 @@ function settingsImport() {
 				if (settingnames.indexOf($.trim(settingentry[0])) != -1) {
 					if ($.trim(settingentry[0]) == 'whiteList' || $.trim(settingentry[0]) == 'blackList') {
 						var listarray = $.trim(settingentry[1]).replace(/(\[|\]|")/g,"").split(",");
-						if ($.trim(settingentry[0]) == 'whiteList' && listarray.toString() != '') localStorage['whiteList'] = JSON.stringify(listarray);
-						else if ($.trim(settingentry[0]) == 'blackList' && listarray.toString() != '') localStorage['blackList'] = JSON.stringify(listarray);
-					} else 
-						localStorage[$.trim(settingentry[0])] = $.trim(settingentry[1]);
+						if ($.trim(settingentry[0]) == 'whiteList' && listarray.toString() != '') {
+							dpSettings['whiteList'] = JSON.stringify(listarray);
+							updates['whiteList'] = dpSettings['whiteList'];
+						} else if ($.trim(settingentry[0]) == 'blackList' && listarray.toString() != '') {
+							dpSettings['blackList'] = JSON.stringify(listarray);
+							updates['blackList'] = dpSettings['blackList'];
+						}
+					} else {
+						dpSettings[$.trim(settingentry[0])] = $.trim(settingentry[1]);
+						updates[$.trim(settingentry[0])] = $.trim(settingentry[1]);
+					}
 				} else {
 					error += $.trim(settingentry[0])+", ";
 				}
 			}
 		});
 	}
-	loadOptions();
-	listUpdate();
-	if (!error) {
-		notification(chrome.i18n.getMessage("importsuccessoptions"));
-		$("#settingsimport").val("");
-	} else {
-		notification(chrome.i18n.getMessage("importsuccesscond")+error.slice(0, -2));
-	}
+	chrome.storage.local.set(updates, function() {
+		loadOptions();
+		listUpdate();
+		if (!error) {
+			notification(chrome.i18n.getMessage("importsuccessoptions"));
+			$("#settingsimport").val("");
+		} else {
+			notification(chrome.i18n.getMessage("importsuccesscond")+error.slice(0, -2));
+		}
+	});
 }

@@ -2,25 +2,31 @@
 // Icon by dunedhel: http://dunedhel.deviantart.com/
 // Supporting functions by AdThwart - T. Joseph
 
-//'use strict'; - enable after testing
-var version = (function () {
-	var xhr = new XMLHttpRequest();
-	xhr.open('GET', chrome.extension.getURL('manifest.json'), false);
-	xhr.send(null);
-	return JSON.parse(xhr.responseText).version;
-}());
+'use strict';
+
 var cloakedTabs = [];
 var uncloakedTabs = [];
 var contextLoaded = false;
 var dpicon, dptitle;
-var blackList, whiteList;
+var blackList = [], whiteList = [];
+var settings = {};
+
+// ----- Initialization
+// Load settings from chrome.storage.local on service worker startup
+var initPromise = chrome.storage.local.get(null).then(function(stored) {
+	settings = stored;
+	setDefaultOptions();
+	initLists();
+	dpicon = settings["iconType"] || 'coffee';
+	dptitle = settings["iconTitle"] || 'Decreased Productivity';
+});
 
 // ----- Supporting Functions
 
-function enabled(tab, dpcloakindex) {
+function enabled(tab, providedIndex) {
 	var dpdomaincheck = domainCheck(extractDomainFromURL(tab.url));
-	var dpcloakindex = dpcloakindex || cloakedTabs.indexOf(tab.windowId+"|"+tab.id);
-	if ((localStorage["enable"] == "true" || dpdomaincheck == '1') && dpdomaincheck != '0' && (localStorage["global"] == "true" || (localStorage["global"] == "false" && (dpcloakindex != -1 || localStorage["newPages"] == "Cloak" || dpdomaincheck == '1')))) return 'true';
+	var dpcloakindex = (typeof providedIndex !== 'undefined') ? providedIndex : cloakedTabs.indexOf(tab.windowId+"|"+tab.id);
+	if ((settings["enable"] == "true" || dpdomaincheck == '1') && dpdomaincheck != '0' && (settings["global"] == "true" || (settings["global"] == "false" && (dpcloakindex != -1 || settings["newPages"] == "Cloak" || dpdomaincheck == '1')))) return 'true';
 	return 'false';
 }
 function domainCheck(domain) {
@@ -79,19 +85,18 @@ function extractDomainFromURL(url) {
 	if (url.indexOf(":") > 0) url = url.substr(0, url.indexOf(":"));
 	return url;
 }
-function domainHandler(domain,action) {
-	// Initialize local storage
-	if (typeof(localStorage['whiteList'])=='undefined') localStorage['whiteList'] = JSON.stringify([]);
-	if (typeof(localStorage['blackList'])=='undefined') localStorage['blackList'] = JSON.stringify([]);
-	var tempWhitelist = JSON.parse(localStorage['whiteList']);
-	var tempBlacklist = JSON.parse(localStorage['blackList']);
-	
+function domainHandler(domain, action) {
+	if (!settings['whiteList']) settings['whiteList'] = JSON.stringify([]);
+	if (!settings['blackList']) settings['blackList'] = JSON.stringify([]);
+	var tempWhitelist = JSON.parse(settings['whiteList']);
+	var tempBlacklist = JSON.parse(settings['blackList']);
+
 	// Remove domain from whitelist and blacklist
 	var pos = tempWhitelist.indexOf(domain);
-	if (pos>-1) tempWhitelist.splice(pos,1);
+	if (pos > -1) tempWhitelist.splice(pos, 1);
 	pos = tempBlacklist.indexOf(domain);
-	if (pos>-1) tempBlacklist.splice(pos,1);
-	
+	if (pos > -1) tempBlacklist.splice(pos, 1);
+
 	switch(action) {
 		case 0:	// Whitelist
 			tempWhitelist.push(domain);
@@ -102,21 +107,26 @@ function domainHandler(domain,action) {
 		case 2:	// Remove
 			break;
 	}
-	
-	localStorage['blackList'] = JSON.stringify(tempBlacklist);
-	localStorage['whiteList'] = JSON.stringify(tempWhitelist);
+
+	settings['blackList'] = JSON.stringify(tempBlacklist);
+	settings['whiteList'] = JSON.stringify(tempWhitelist);
+	chrome.storage.local.set({
+		blackList: settings['blackList'],
+		whiteList: settings['whiteList']
+	});
 	blackList = tempBlacklist.sort();
 	whiteList = tempWhitelist.sort();
 	return false;
 }
 // ----- Options
 function optionExists(opt) {
-	return (typeof localStorage[opt] != "undefined");
+	return (typeof settings[opt] !== 'undefined');
 }
 function defaultOptionValue(opt, val) {
-	if (!optionExists(opt)) localStorage[opt] = val;
+	if (!optionExists(opt)) settings[opt] = val;
 }
 function setDefaultOptions() {
+	var version = chrome.runtime.getManifest().version;
 	defaultOptionValue("version", version);
 	defaultOptionValue("enable", "true");
 	defaultOptionValue("enableToggle", "true");
@@ -151,58 +161,87 @@ function setDefaultOptions() {
 	defaultOptionValue("s_text", "000000");
 	defaultOptionValue("customcss", "");
 	// fix hotkey shortcut if in old format (if using + as separator instead of space)
-	if (localStorage["hotkey"].indexOf('+') != -1) {
-		localStorage["hotkey"] = localStorage["hotkey"].replace(/\+$/, "APLUSA").replace(/\+/g, " ").replace(/APLUSA/, "+");
+	if (settings["hotkey"] && settings["hotkey"].indexOf('+') != -1) {
+		settings["hotkey"] = settings["hotkey"].replace(/\+$/, "APLUSA").replace(/\+/g, " ").replace(/APLUSA/, "+");
 	}
 	// delete old option if exists
-	if (optionExists("globalEnable"))
-		delete localStorage["globalEnable"];
+	if (optionExists("globalEnable")) delete settings["globalEnable"];
 	// delete old option if exists
-	if (optionExists("style"))
-		delete localStorage["style"];
+	if (optionExists("style")) delete settings["style"];
 	// set SFW Level to SFW (for new change in v0.46.3)
-	if (localStorage["sfwmode"] == "true")
-		localStorage["sfwmode"] = "SFW";
-	if (!optionExists("blackList")) localStorage['blackList'] = JSON.stringify([]);
-	if (!optionExists("whiteList")) localStorage['whiteList'] = JSON.stringify([]);
+	if (settings["sfwmode"] == "true") settings["sfwmode"] = "SFW";
+	if (!optionExists("blackList")) settings['blackList'] = JSON.stringify([]);
+	if (!optionExists("whiteList")) settings['whiteList'] = JSON.stringify([]);
+
+	chrome.storage.local.set(settings);
 }
-// Context Menu
-chrome.contextMenus.create({"title": chrome.i18n.getMessage("whitelistdomain"), "contexts": ['browser_action','page_action'], "onclick": function(info, tab){
-	if (tab.url.substring(0, 4) != 'http') return;
-	domainHandler(extractDomainFromURL(tab.url), 0);
-	if (localStorage["enable"] == "true") magician('false', tab.id);
-}});
-chrome.contextMenus.create({"title": chrome.i18n.getMessage("blacklistdomain"), "contexts": ['browser_action','page_action'], "onclick": function(info, tab){
-	if (tab.url.substring(0, 4) != 'http') return;
-	domainHandler(extractDomainFromURL(tab.url), 1);
-	if (localStorage["enable"] == "true") magician('true', tab.id);
-}});
-chrome.contextMenus.create({"title": chrome.i18n.getMessage("removelist"), "contexts": ['browser_action','page_action'], "onclick": function(info, tab){
-	if (tab.url.substring(0, 4) != 'http') return;
-	domainHandler(extractDomainFromURL(tab.url), 2);
-	if (localStorage["enable"] == "true")  {
-		var flag = 'false';
-		if (localStorage['newPages'] == 'Cloak' || localStorage['global'] == 'true') flag = 'true';
-		magician(flag, tab.id);
-	}
-}});
+
+// ----- Context Menu Setup (created on install; persists across service worker restarts)
+chrome.runtime.onInstalled.addListener(function() {
+	initPromise.then(function() {
+		chrome.contextMenus.removeAll(function() {
+			chrome.contextMenus.create({"id": "whitelist", "title": chrome.i18n.getMessage("whitelistdomain"), "contexts": ['action']});
+			chrome.contextMenus.create({"id": "blacklist", "title": chrome.i18n.getMessage("blacklistdomain"), "contexts": ['action']});
+			chrome.contextMenus.create({"id": "removelist", "title": chrome.i18n.getMessage("removelist"), "contexts": ['action']});
+			if (settings["showContext"] == 'true') {
+				chrome.contextMenus.create({"id": "opensafely", "title": chrome.i18n.getMessage("opensafely"), "contexts": ['link', 'image']});
+				contextLoaded = true;
+			}
+		});
+	});
+});
+
+// Handle all context menu clicks via onClicked listener
+chrome.contextMenus.onClicked.addListener(function(info, tab) {
+	initPromise.then(function() {
+		if (info.menuItemId === 'whitelist') {
+			if (tab.url.substring(0, 4) != 'http') return;
+			domainHandler(extractDomainFromURL(tab.url), 0);
+			if (settings["enable"] == "true") magician('false', tab.id);
+		} else if (info.menuItemId === 'blacklist') {
+			if (tab.url.substring(0, 4) != 'http') return;
+			domainHandler(extractDomainFromURL(tab.url), 1);
+			if (settings["enable"] == "true") magician('true', tab.id);
+		} else if (info.menuItemId === 'removelist') {
+			if (tab.url.substring(0, 4) != 'http') return;
+			domainHandler(extractDomainFromURL(tab.url), 2);
+			if (settings["enable"] == "true") {
+				var flag = 'false';
+				if (settings['newPages'] == 'Cloak' || settings['global'] == 'true') flag = 'true';
+				magician(flag, tab.id);
+			}
+		} else if (info.menuItemId === 'opensafely') {
+			newCloak(info, tab);
+		}
+	});
+});
 
 // Called by clicking on the context menu item
 function newCloak(info, tab) {
 	// Enable cloaking (in case its been disabled) and open the link in a new tab
-	localStorage["enable"] = "true";
+	settings["enable"] = "true";
+	chrome.storage.local.set({enable: "true"});
 	// If it's an image, load the "src" attribute
-	if (info.mediaType) chrome.tabs.create({'url': info.srcUrl}, function(tab){ cloakedTabs.push(tab.windowId+"|"+tab.id);recursiveCloak('true', localStorage["global"], tab.id); });
+	if (info.mediaType) chrome.tabs.create({'url': info.srcUrl}, function(tab){ cloakedTabs.push(tab.windowId+"|"+tab.id); recursiveCloak('true', settings["global"], tab.id); });
 	// Else, it's a normal link, so load the linkUrl.
-	else chrome.tabs.create({'url': info.linkUrl}, function(tab){ cloakedTabs.push(tab.windowId+"|"+tab.id);recursiveCloak('true', localStorage["global"], tab.id); });
+	else chrome.tabs.create({'url': info.linkUrl}, function(tab){ cloakedTabs.push(tab.windowId+"|"+tab.id); recursiveCloak('true', settings["global"], tab.id); });
 }
-// Add context menu item that shows only if you right-click on links/images.
+
+// Add/remove the "Open Safely" context menu item based on showContext setting
 function dpContext() {
-	if (localStorage["showContext"] == 'true' && !contextLoaded) {
-		chrome.contextMenus.create({"title": chrome.i18n.getMessage("opensafely"), "contexts": ['link', 'image'], "onclick": function(info, tab){newCloak(info, tab);}});
+	if (settings["showContext"] == 'true' && !contextLoaded) {
+		chrome.contextMenus.create({"id": "opensafely", "title": chrome.i18n.getMessage("opensafely"), "contexts": ['link', 'image']}, function() {
+			if (chrome.runtime.lastError) { /* already exists */ }
+		});
 		contextLoaded = true;
+	} else if (settings["showContext"] != 'true' && contextLoaded) {
+		chrome.contextMenus.remove("opensafely", function() {
+			if (chrome.runtime.lastError) { /* didn't exist */ }
+		});
+		contextLoaded = false;
 	}
 }
+
 // ----- Main Functions
 function checkChrome(url) {
 	if (url.substring(0, 6) == 'chrome') return true;
@@ -210,22 +249,30 @@ function checkChrome(url) {
 }
 function hotkeyChange() {
 	chrome.windows.getAll({"populate":true}, function(windows) {
-		windows.map(function(window) {
-			window.tabs.map(function(tab) {
-				if (!checkChrome(tab.url)) chrome.tabs.executeScript(tab.id, {code: 'hotkeySet("'+localStorage["enableToggle"]+'","'+localStorage["hotkey"]+'","'+localStorage["paranoidhotkey"]+'");', allFrames: true});
+		windows.forEach(function(chromeWindow) {
+			chromeWindow.tabs.forEach(function(tab) {
+				if (!checkChrome(tab.url)) {
+					chrome.scripting.executeScript({
+						target: {tabId: tab.id, allFrames: true},
+						func: function(enableToggle, hotkey, paranoidhotkey) {
+							hotkeySet(enableToggle, hotkey, paranoidhotkey);
+						},
+						args: [settings["enableToggle"], settings["hotkey"], settings["paranoidhotkey"]]
+					}).catch(function() {});
+				}
 			});
 		});
 	});
 }
 function optionsSaveTrigger(prevglob, newglob) {
-	var enable = localStorage["enable"];
+	var enable = settings["enable"];
 	var global = newglob;
 	if (prevglob == 'true' && newglob == 'false') {
 		global = 'true';
 		enable = 'false';
 	}
 	if (global == 'false') {
-		for (var i=cloakedTabs.length-1; i>=0; --i) {
+		for (var i = cloakedTabs.length-1; i >= 0; --i) {
 			magician(enable, parseInt(cloakedTabs[i].split("|")[1]));
 		}
 		if (enable == 'false') cloakedTabs = [];
@@ -234,8 +281,8 @@ function optionsSaveTrigger(prevglob, newglob) {
 function recursiveCloak(enable, global, tabId) {
 	if (global == 'true') {
 		chrome.windows.getAll({"populate":true}, function(windows) {
-			windows.map(function(window) {
-				window.tabs.map(function(tab) {
+			windows.forEach(function(chromeWindow) {
+				chromeWindow.tabs.forEach(function(tab) {
 					if (!checkChrome(tab.url)) {
 						var enabletemp = enable;
 						var dpdomaincheck = domainCheck(extractDomainFromURL(tab.url));
@@ -262,38 +309,55 @@ function recursiveCloak(enable, global, tabId) {
 	}
 }
 function magician(enable, tabId) {
+	var disableFavicons = settings["disableFavicons"] == 'true';
+	var hidePageTitles = settings["hidePageTitles"] == 'true';
+	var pageTitleText = settings["pageTitleText"] || 'Google Chrome';
+	var showIcon = settings["showIcon"];
+
 	if (enable == 'true') {
-		if (localStorage["disableFavicons"] == 'true' && localStorage["hidePageTitles"] == 'true')
-			chrome.tabs.executeScript(tabId, {code: 'init();faviconblank();replaceTitle("'+localStorage["pageTitleText"]+'");titleBind("'+localStorage["pageTitleText"]+'");', allFrames: true});
-		else if (localStorage["disableFavicons"] == 'true' && localStorage["hidePageTitles"] != 'true')
-			chrome.tabs.executeScript(tabId, {code: 'init();faviconblank();titleRestore();', allFrames: true});
-		else if (localStorage["disableFavicons"] != 'true' && localStorage["hidePageTitles"] == 'true')
-			chrome.tabs.executeScript(tabId, {code: 'init();faviconrestore();replaceTitle("'+localStorage["pageTitleText"]+'");titleBind("'+localStorage["pageTitleText"]+'");', allFrames: true});
-		else if (localStorage["disableFavicons"] != 'true' && localStorage["hidePageTitles"] != 'true')
-			chrome.tabs.executeScript(tabId, {code: 'init();faviconrestore();titleRestore();', allFrames: true});
-	} else chrome.tabs.executeScript(tabId, {code: "removeCss();", allFrames: true});
-	if (localStorage["showIcon"] == 'true') {
-		if (enable == 'true') chrome.pageAction.setIcon({path: "img/addressicon/"+dpicon+".png", tabId: tabId});
-		else chrome.pageAction.setIcon({path: "img/addressicon/"+dpicon+"-disabled.png", tabId: tabId});
-		chrome.pageAction.setTitle({title: dptitle, tabId: tabId});
-		chrome.pageAction.show(tabId);
-	} else chrome.pageAction.hide(tabId);
+		chrome.scripting.executeScript({
+			target: {tabId: tabId, allFrames: true},
+			func: function(disableFavicons, hidePageTitles, pageTitleText) {
+				init();
+				if (disableFavicons) faviconblank();
+				else faviconrestore();
+				if (hidePageTitles) { replaceTitle(pageTitleText); titleBind(pageTitleText); }
+				else titleRestore();
+			},
+			args: [disableFavicons, hidePageTitles, pageTitleText]
+		}).catch(function() {});
+	} else {
+		chrome.scripting.executeScript({
+			target: {tabId: tabId, allFrames: true},
+			func: function() { removeCss(); }
+		}).catch(function() {});
+	}
+
+	if (showIcon == 'true') {
+		if (enable == 'true') chrome.action.setIcon({path: "img/addressicon/"+dpicon+".png", tabId: tabId}).catch(function() {});
+		else chrome.action.setIcon({path: "img/addressicon/"+dpicon+"-disabled.png", tabId: tabId}).catch(function() {});
+		chrome.action.setTitle({title: dptitle, tabId: tabId}).catch(function() {});
+		chrome.action.show(tabId).catch(function() {});
+	} else chrome.action.hide(tabId).catch(function() {});
 }
 function dpHandle(tab) {
 	if (checkChrome(tab.url)) return;
-	if (localStorage["global"] == "true" && domainCheck(extractDomainFromURL(tab.url)) != 1) {
-		if (localStorage["enable"] == "true") {
+	if (settings["global"] == "true" && domainCheck(extractDomainFromURL(tab.url)) != 1) {
+		if (settings["enable"] == "true") {
 			recursiveCloak('false', 'true');
-			localStorage["enable"] = "false";
+			settings["enable"] = "false";
+			chrome.storage.local.set({enable: "false"});
 		} else {
 			recursiveCloak('true', 'true');
-			localStorage["enable"] = "true";
+			settings["enable"] = "true";
+			chrome.storage.local.set({enable: "true"});
 		}
 	} else {
 		var dpTabId = tab.windowId+"|"+tab.id;
 		var dpcloakindex = cloakedTabs.indexOf(dpTabId);
 		var dpuncloakindex = uncloakedTabs.indexOf(dpTabId);
-		localStorage["enable"] = "true";
+		settings["enable"] = "true";
+		chrome.storage.local.set({enable: "true"});
 		if (dpcloakindex != -1) {
 			magician('false', tab.id);
 			if (dpuncloakindex == -1) uncloakedTabs.push(dpTabId);
@@ -306,58 +370,52 @@ function dpHandle(tab) {
 	}
 }
 function setDPIcon() {
-	dpicon = localStorage["iconType"];
-	dptitle = localStorage["iconTitle"];
+	dpicon = settings["iconType"] || 'coffee';
+	dptitle = settings["iconTitle"] || 'Decreased Productivity';
 	chrome.windows.getAll({"populate":true}, function(windows) {
-		windows.map(function(window) {
-			window.tabs.map(function(tab) {
-				if (cloakedTabs.indexOf(tab.windowId+"|"+tab.id) != -1) chrome.pageAction.setIcon({path: "img/addressicon/"+dpicon+".png", tabId: tab.id});
-				else chrome.pageAction.setIcon({path: "img/addressicon/"+dpicon+"-disabled.png", tabId: tab.id});
-				chrome.pageAction.setTitle({title: dptitle, tabId: tab.id});
-				if (localStorage["showIcon"] == 'true') chrome.pageAction.show(tab.id);
-				else chrome.pageAction.hide(tab.id);
+		windows.forEach(function(chromeWindow) {
+			chromeWindow.tabs.forEach(function(tab) {
+				if (cloakedTabs.indexOf(tab.windowId+"|"+tab.id) != -1) chrome.action.setIcon({path: "img/addressicon/"+dpicon+".png", tabId: tab.id}).catch(function() {});
+				else chrome.action.setIcon({path: "img/addressicon/"+dpicon+"-disabled.png", tabId: tab.id}).catch(function() {});
+				chrome.action.setTitle({title: dptitle, tabId: tab.id}).catch(function() {});
+				if (settings["showIcon"] == 'true') chrome.action.show(tab.id).catch(function() {});
+				else chrome.action.hide(tab.id).catch(function() {});
 			});
 		});
 	});
 }
 function initLists() {
-	blackList = JSON.parse(localStorage['blackList']).sort();
-	whiteList = JSON.parse(localStorage['whiteList']).sort();	
+	blackList = JSON.parse(settings['blackList'] || '[]').sort();
+	whiteList = JSON.parse(settings['whiteList'] || '[]').sort();
 }
+
 // ----- Request library to support content script communication
 chrome.tabs.onUpdated.addListener(function(tabid, changeinfo, tab) {
 	if (changeinfo.status == "loading") {
-		var dpTabId = tab.windowId+"|"+tabid;
-		var dpcloakindex = cloakedTabs.indexOf(dpTabId);
-		var enable = enabled(tab, dpcloakindex);
-		if (localStorage["showIcon"] == "true") {
-			if (enable == "true") chrome.pageAction.setIcon({path: "img/addressicon/"+dpicon+".png", tabId: tabid});
-			else chrome.pageAction.setIcon({path: "img/addressicon/"+dpicon+"-disabled.png", tabId: tabid});
-			chrome.pageAction.setTitle({title: dptitle, tabId: tabid});
-			chrome.pageAction.show(tabid);
-		} else chrome.pageAction.hide(tabid);
-		if (checkChrome(tab.url)) return;
-		var dpuncloakindex = uncloakedTabs.indexOf(dpTabId);
-		if (enable == "true") {
-			magician('true', tabid);
-			if (localStorage["global"] == "false" && localStorage["enable"] == "false") localStorage["enable"] = "true";
-			if (dpcloakindex == -1) cloakedTabs.push(dpTabId);
-			if (dpuncloakindex != -1) uncloakedTabs.splice(dpuncloakindex, 1);
-		} else {
-			if (localStorage["enableStickiness"] == "true") {
-				if (tab.openerTabId) {
-					if (cloakedTabs.indexOf(tab.windowId+"|"+tab.openerTabId) != -1 && dpuncloakindex == -1) {
-						if (domainCheck(extractDomainFromURL(tab.url)) != '0') {
-							magician('true', tabid);
-							cloakedTabs.push(dpTabId);
-							return;
-						}
-					}
-					if (dpuncloakindex == -1) uncloakedTabs.push(dpTabId);
-					if (dpcloakindex != -1) cloakedTabs.splice(dpcloakindex, 1);
-				} else {
-					chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-						if (tabs[0].windowId == tab.windowId && cloakedTabs.indexOf(tabs[0].windowId+"|"+tabs[0].id) != -1 && dpuncloakindex == -1) {
+		initPromise.then(function() {
+			var dpTabId = tab.windowId+"|"+tabid;
+			var dpcloakindex = cloakedTabs.indexOf(dpTabId);
+			var enable = enabled(tab, dpcloakindex);
+			if (settings["showIcon"] == "true") {
+				if (enable == "true") chrome.action.setIcon({path: "img/addressicon/"+dpicon+".png", tabId: tabid}).catch(function() {});
+				else chrome.action.setIcon({path: "img/addressicon/"+dpicon+"-disabled.png", tabId: tabid}).catch(function() {});
+				chrome.action.setTitle({title: dptitle, tabId: tabid}).catch(function() {});
+				chrome.action.show(tabid).catch(function() {});
+			} else chrome.action.hide(tabid).catch(function() {});
+			if (checkChrome(tab.url)) return;
+			var dpuncloakindex = uncloakedTabs.indexOf(dpTabId);
+			if (enable == "true") {
+				magician('true', tabid);
+				if (settings["global"] == "false" && settings["enable"] == "false") {
+					settings["enable"] = "true";
+					chrome.storage.local.set({enable: "true"});
+				}
+				if (dpcloakindex == -1) cloakedTabs.push(dpTabId);
+				if (dpuncloakindex != -1) uncloakedTabs.splice(dpuncloakindex, 1);
+			} else {
+				if (settings["enableStickiness"] == "true") {
+					if (tab.openerTabId) {
+						if (cloakedTabs.indexOf(tab.windowId+"|"+tab.openerTabId) != -1 && dpuncloakindex == -1) {
 							if (domainCheck(extractDomainFromURL(tab.url)) != '0') {
 								magician('true', tabid);
 								cloakedTabs.push(dpTabId);
@@ -366,12 +424,24 @@ chrome.tabs.onUpdated.addListener(function(tabid, changeinfo, tab) {
 						}
 						if (dpuncloakindex == -1) uncloakedTabs.push(dpTabId);
 						if (dpcloakindex != -1) cloakedTabs.splice(dpcloakindex, 1);
-					});
+					} else {
+						chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+							if (tabs[0] && tabs[0].windowId == tab.windowId && cloakedTabs.indexOf(tabs[0].windowId+"|"+tabs[0].id) != -1 && dpuncloakindex == -1) {
+								if (domainCheck(extractDomainFromURL(tab.url)) != '0') {
+									magician('true', tabid);
+									cloakedTabs.push(dpTabId);
+									return;
+								}
+							}
+							if (dpuncloakindex == -1) uncloakedTabs.push(dpTabId);
+							if (dpcloakindex != -1) cloakedTabs.splice(dpcloakindex, 1);
+						});
+					}
 				}
 			}
-		}
+		});
 	}
-});	
+});
 chrome.tabs.onRemoved.addListener(function(tabid, windowInfo) {
 	var dpTabId = windowInfo.windowId+"|"+tabid;
 	var dpcloakindex = cloakedTabs.indexOf(dpTabId);
@@ -385,13 +455,14 @@ var requestDispatchTable = {
 		var dpcloakindex = cloakedTabs.indexOf(dpTabId);
 		var enable = enabled(sender.tab, dpcloakindex);
 		if (enable == 'true' && dpcloakindex == -1) cloakedTabs.push(dpTabId);
-		sendResponse({enable: enable, background: localStorage["s_bg"], favicon: localStorage["disableFavicons"], hidePageTitles: localStorage["hidePageTitles"], pageTitleText: localStorage["pageTitleText"], enableToggle: localStorage["enableToggle"], hotkey: localStorage["hotkey"], paranoidhotkey: localStorage["paranoidhotkey"]});
+		sendResponse({enable: enable, background: settings["s_bg"], favicon: settings["disableFavicons"], hidePageTitles: settings["hidePageTitles"], pageTitleText: settings["pageTitleText"], enableToggle: settings["enableToggle"], hotkey: settings["hotkey"], paranoidhotkey: settings["paranoidhotkey"]});
 	},
 	"toggle": function(request, sender, sendResponse) {
-		if (localStorage["savedsfwmode"] != "") {
-			localStorage["sfwmode"] = localStorage["savedsfwmode"];
-			localStorage["savedsfwmode"] = "";
-			if (localStorage["global"] == "true") recursiveCloak('true', 'true');
+		if (settings["savedsfwmode"] != "") {
+			settings["sfwmode"] = settings["savedsfwmode"];
+			settings["savedsfwmode"] = "";
+			chrome.storage.local.set({sfwmode: settings["sfwmode"], savedsfwmode: ""});
+			if (settings["global"] == "true") recursiveCloak('true', 'true');
 			else {
 				magician('true', sender.tab.id);
 				var dpTabId = sender.tab.windowId+"|"+sender.tab.id;
@@ -399,16 +470,18 @@ var requestDispatchTable = {
 				if (dpuncloakindex != -1) uncloakedTabs.splice(dpuncloakindex, 1);
 				if (cloakedTabs.indexOf(dpTabId) == -1) cloakedTabs.push(dpTabId);
 			}
-			localStorage["enable"] = "true";
+			settings["enable"] = "true";
+			chrome.storage.local.set({enable: "true"});
 		} else {
 			dpHandle(sender.tab);
 		}
 	},
 	"toggleparanoid": function(request, sender, sendResponse) {
-		if (localStorage["savedsfwmode"] == "") {
-			localStorage["savedsfwmode"] = localStorage["sfwmode"];
-			localStorage["sfwmode"] = "Paranoid";
-			if (localStorage["global"] == "true") recursiveCloak('true', 'true');
+		if (settings["savedsfwmode"] == "") {
+			settings["savedsfwmode"] = settings["sfwmode"];
+			settings["sfwmode"] = "Paranoid";
+			chrome.storage.local.set({savedsfwmode: settings["savedsfwmode"], sfwmode: "Paranoid"});
+			if (settings["global"] == "true") recursiveCloak('true', 'true');
 			else {
 				magician('true', sender.tab.id);
 				var dpTabId = sender.tab.windowId+"|"+sender.tab.id;
@@ -416,42 +489,71 @@ var requestDispatchTable = {
 				if (dpuncloakindex != -1) uncloakedTabs.splice(dpuncloakindex, 1);
 				if (cloakedTabs.indexOf(dpTabId) == -1) cloakedTabs.push(dpTabId);
 			}
-			localStorage["enable"] = "true";
+			settings["enable"] = "true";
+			chrome.storage.local.set({enable: "true"});
 		} else {
-			localStorage["sfwmode"] = localStorage["savedsfwmode"];
-			localStorage["savedsfwmode"] = "";
+			settings["sfwmode"] = settings["savedsfwmode"];
+			settings["savedsfwmode"] = "";
+			chrome.storage.local.set({sfwmode: settings["sfwmode"], savedsfwmode: ""});
 			dpHandle(sender.tab);
 		}
 	},
 	"get-settings": function(request, sender, sendResponse) {
 		var enable, fontface;
-		if (localStorage["font"] == '-Custom-') {
-			if (localStorage["customfont"]) fontface = localStorage["customfont"];
+		if (settings["font"] == '-Custom-') {
+			if (settings["customfont"]) fontface = settings["customfont"];
 			else fontface = 'Arial';
-		} else fontface = localStorage["font"];
-		if (localStorage["global"] == "false") enable = 'true';
+		} else fontface = settings["font"];
+		if (settings["global"] == "false") enable = 'true';
 		else enable = enabled(sender.tab);
-		sendResponse({enable: enable, sfwmode: localStorage["sfwmode"], font: fontface, fontsize: localStorage["fontsize"], underline: localStorage["showUnderline"], background: localStorage["s_bg"], text: localStorage["s_text"], table: localStorage["s_table"], link: localStorage["s_link"], bold: localStorage["removeBold"], opacity1: localStorage["opacity1"], opacity2: localStorage["opacity2"], collapseimage: localStorage["collapseimage"], maxheight: localStorage["maxheight"], maxwidth: localStorage["maxwidth"], customcss: localStorage["customcss"]});
+		sendResponse({enable: enable, sfwmode: settings["sfwmode"], font: fontface, fontsize: settings["fontsize"], underline: settings["showUnderline"], background: settings["s_bg"], text: settings["s_text"], table: settings["s_table"], link: settings["s_link"], bold: settings["removeBold"], opacity1: settings["opacity1"], opacity2: settings["opacity2"], collapseimage: settings["collapseimage"], maxheight: settings["maxheight"], maxwidth: settings["maxwidth"], customcss: settings["customcss"]});
+	},
+	"options-save-trigger": function(request, sender, sendResponse) {
+		// Reload settings from storage so we have the latest values from the options page
+		chrome.storage.local.get(null, function(stored) {
+			settings = stored;
+			initLists();
+			dpicon = settings["iconType"] || 'coffee';
+			dptitle = settings["iconTitle"] || 'Decreased Productivity';
+			dpContext();
+			optionsSaveTrigger(request.prevglob, request.newglob);
+		});
+	},
+	"hotkey-change": function(request, sender, sendResponse) {
+		chrome.storage.local.get(null, function(stored) {
+			settings = stored;
+			hotkeyChange();
+		});
+	},
+	"domain-handler": function(request, sender, sendResponse) {
+		domainHandler(request.domain, request.action);
+		sendResponse({whiteList: settings['whiteList'], blackList: settings['blackList']});
+	},
+	"init-lists": function(request, sender, sendResponse) {
+		initLists();
+	},
+	"set-dp-icon": function(request, sender, sendResponse) {
+		chrome.storage.local.get(null, function(stored) {
+			settings = stored;
+			setDPIcon();
+		});
 	}
-}
+};
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-	if (request.reqtype in requestDispatchTable) requestDispatchTable[request.reqtype](request, sender, sendResponse);
-	else sendResponse({});
+	initPromise.then(function() {
+		if (request.reqtype in requestDispatchTable) requestDispatchTable[request.reqtype](request, sender, sendResponse);
+		else sendResponse({});
+	});
+	return true; // Keep the message channel open for async sendResponse
 });
-// ----- If page action icon is clicked, either enable or disable the cloak
-chrome.pageAction.onClicked.addListener(function(tab) {
-	dpHandle(tab);
+// ----- If action icon is clicked, either enable or disable the cloak
+chrome.action.onClicked.addListener(function(tab) {
+	initPromise.then(function() {
+		dpHandle(tab);
+	});
 });
-// Execute
-setDefaultOptions();
-// save blacklist and whitelist in global variable for faster lookups
-initLists();
-setDPIcon();
-dpContext();
-if ((!optionExists("version") || localStorage["version"] != version) && localStorage["showUpdateNotifications"] == 'true') {
-	//chrome.tabs.create({ url: chrome.extension.getURL('updated.html'), selected: false }); - minor update so don't show update page
-	localStorage["version"] = version;
-}
+
 chrome.runtime.onUpdateAvailable.addListener(function (details) {
 	// an update is available, but wait until user restarts their browser as to not disrupt their current session and cloaked tabs.
 });
+
